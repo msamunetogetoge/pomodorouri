@@ -22,7 +22,8 @@ pub enum Msg {
     Stop,
     Reset,
     Tick,
-    Break,
+    StartBreak,
+    ShowBreakNotification,
 }
 
 pub struct App {
@@ -31,12 +32,14 @@ pub struct App {
     is_break: bool,
 }
 
+/// 00:25:00を返す
 fn pomodoro_time() -> NaiveTime {
-    NaiveTime::parse_from_str("00:25:00", "%H:%M:%S").unwrap()
+    NaiveTime::parse_from_str("00:00:10", "%H:%M:%S").unwrap()
 }
 
+/// 00:05:00を返す
 fn rest_time() -> NaiveTime {
-    NaiveTime::parse_from_str("00:05:00", "%H:%M:%S").unwrap()
+    NaiveTime::parse_from_str("00:00:15", "%H:%M:%S").unwrap()
 }
 
 impl Component for App {
@@ -53,50 +56,12 @@ impl Component for App {
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
-            Msg::Start => {
-                if self.timer_handle.is_none() {
-                    let link = ctx.link().clone();
-                    let handle = Interval::new(1000, move || link.send_message(Msg::Tick));
-                    self.timer_handle = Some(handle);
-                }
-                false
-            }
-            Msg::Tick => {
-                if self.value > NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
-                    self.value = self.value - chrono::Duration::seconds(1);
-                    return true;
-                } else if !self.is_break {
-                    self.timer_handle.take();
-                    spawn_local(async {
-                        let args = to_value(&()).unwrap();
-                        invoke("show_break_notification", args).await;
-                    });
-                    ctx.link().send_message(Msg::Break);
-                    false
-                } else {
-                    self.value = rest_time();
-                    self.is_break = true;
-                    true
-                }
-            }
-            Msg::Reset => {
-                self.value = pomodoro_time();
-                self.is_break = false;
-                ctx.link().send_message(Msg::Stop);
-                return true;
-            }
-            Msg::Stop => {
-                self.timer_handle = None;
-                false
-            }
-            Msg::Break => {
-                self.value = rest_time();
-                self.is_break = true;
-                let link = ctx.link().clone();
-                let handle = Interval::new(1000, move || link.send_message(Msg::Tick));
-                self.timer_handle = Some(handle);
-                true
-            }
+            Msg::Start => self.start_timer(ctx),
+            Msg::Tick => self.tick(ctx),
+            Msg::Reset => self.reset_timer(ctx),
+            Msg::Stop => self.stop_timer(),
+            Msg::StartBreak => self.start_break(ctx),
+            Msg::ShowBreakNotification => self.show_break_notification(),
         }
     }
 
@@ -119,5 +84,62 @@ impl Component for App {
                 </main>
             </>
         }
+    }
+}
+
+impl App {
+    fn start_timer(&mut self, ctx: &Context<Self>) -> bool {
+        if self.timer_handle.is_none() {
+            let link = ctx.link().clone();
+            let handle = Interval::new(1000, move || link.send_message(Msg::Tick));
+            self.timer_handle = Some(handle);
+        }
+        false
+    }
+
+    fn tick(&mut self, ctx: &Context<Self>) -> bool {
+        if self.value > NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+            self.value = self.value - chrono::Duration::seconds(1);
+            true
+        } else if !self.is_break {
+            // タイマーが0で、休憩モードでない場合
+            self.timer_handle.take();
+            ctx.link().send_message(Msg::ShowBreakNotification);
+            ctx.link().send_message(Msg::StartBreak);
+            false
+        } else {
+            false
+        }
+    }
+
+    fn reset_timer(&mut self, ctx: &Context<Self>) -> bool {
+        self.value = pomodoro_time();
+        self.is_break = false;
+        ctx.link().send_message(Msg::Stop);
+        true
+    }
+
+    fn stop_timer(&mut self) -> bool {
+        if let Some(handle) = self.timer_handle.take() {
+            handle.cancel();
+        }
+        false
+    }
+
+    fn start_break(&mut self, ctx: &Context<Self>) -> bool {
+        self.value = rest_time();
+        self.is_break = true;
+        let link = ctx.link().clone();
+        let handle = Interval::new(1000, move || link.send_message(Msg::Tick));
+        self.timer_handle = Some(handle);
+        true
+    }
+
+    fn show_break_notification(&mut self) -> bool {
+        spawn_local(async {
+            let args = to_value(&()).unwrap();
+            invoke("show_break_notification", args).await;
+        });
+        false
     }
 }
