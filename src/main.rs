@@ -1,3 +1,9 @@
+mod app;
+mod components;
+
+use app::App;
+
 fn main() {
-    println!("Hello, world!");
+    console_error_panic_hook::set_once();
+    yew::Renderer::<App>::new().render();
 }
